@@ -1,0 +1,262 @@
+import pandas as pd
+
+import numpy as np
+
+from sklearn.cluster import KMeans
+
+from sklearn.preprocessing import StandardScaler, OneHotEncoder
+
+from sklearn.linear_model import LinearRegression
+
+from transformers import pipeline
+from sklearn.preprocessing import LabelEncoder
+ 
+# Load the dataset
+
+data = pd.read_csv('ride_sharing_data.csv')
+ 
+# Display the first few rows
+
+print(data.head())
+ 
+# Step 1: Customer Segmentation
+
+# Select features for clustering
+label_encoder = LabelEncoder()
+data['ride_demand'] = label_encoder.fit_transform(data['ride_demand'])
+
+features = data[['base_fare', 'competitor_price', 'distance_km', 'ride_demand']]
+ 
+# Standardize the features
+
+scaler = StandardScaler()
+
+scaled_features = scaler.fit_transform(features)
+ 
+# Apply K-Means clustering
+
+kmeans = KMeans(n_clusters=3, random_state=42)
+
+data['customer_segment'] = kmeans.fit_predict(scaled_features)
+ 
+# Display the first few rows with the customer segment
+
+print(data.head())
+ 
+# Step 2: Demand Forecasting using RAG
+
+# Load a pre-trained model for demand forecasting
+
+forecasting_model = pipeline('text-generation', model='gpt-3')
+ 
+# Example input for demand forecasting
+
+input_text = """
+
+Predict the demand for ride-sharing services based on the following data:
+
+- Date and Time: {}
+
+- Location Start: {}
+
+- Location End: {}
+
+- Distance (km): {}
+
+- Base Fare: {}
+
+- Competitor Price: {}
+
+- Weather Condition: {}
+
+- Traffic Condition: {}
+
+- Customer Segment: {}
+
+"""
+ 
+# Generate forecast for each ride
+
+for index, row in data.iterrows():
+
+    formatted_input = input_text.format(
+
+        row['datetime'], row['location_start'], row['location_end'],
+
+        row['distance_km'], row['base_fare'], row['competitor_price'],
+
+        row['weather_condition'], row['traffic_condition'],
+
+        row['customer_segment']
+
+    )
+
+    forecast = forecasting_model(formatted_input, max_length=50)
+
+    print(f"Ride ID: {row['ride_id']}, Forecasted Demand: {forecast}")
+ 
+# Step 3: Price Elasticity Modeling
+
+# Prepare the data for price elasticity modeling
+
+X = data[['base_fare', 'competitor_price', 'distance_km', 'weather_condition', 'traffic_condition', 'customer_segment']].values
+
+y = data['ride_demand'].values
+ 
+# Encode categorical variables (weather_condition, traffic_condition) if necessary
+
+encoder = OneHotEncoder()
+
+encoded_features = encoder.fit_transform(data[['weather_condition', 'traffic_condition']]).toarray()
+ 
+# Combine encoded features with numerical features
+
+X = np.hstack((data[['base_fare', 'competitor_price', 'distance_km', 'customer_segment']].values, encoded_features))
+ 
+# Fit a linear regression model
+
+model = LinearRegression()
+
+model.fit(X, y)
+ 
+# Predict demand based on price changes
+
+predicted_demand = model.predict(X)
+
+print(predicted_demand)
+ 
+# Step 4: MLOps Implementation
+
+# CI/CD Pipeline with Jenkins
+
+# Create a Jenkinsfile for your CI/CD pipeline
+
+# jenkinsfile_content = """
+
+# pipeline {
+
+#     agent any
+
+#     stages {
+
+#         stage('Build') {
+
+#             steps {
+
+#                 sh 'python -m venv venv'
+
+#                 sh './venv/bin/pip install -r requirements.txt'
+
+#             }
+
+#         }
+
+#         stage('Test') {
+
+#             steps {
+
+#                 sh './venv/bin/python -m unittest discover tests'
+
+#             }
+
+#         }
+
+#         stage('Deploy') {
+
+#             steps {
+
+#                 sh './venv/bin/python deploy.py'
+
+#             }
+
+#         }
+
+#     }
+
+# }
+
+# """
+ 
+# # Dockerization
+
+# # Create a Dockerfile for your application
+
+# dockerfile_content = """
+
+# FROM python:3.8-slim
+ 
+# WORKDIR /app
+ 
+# COPY requirements.txt requirements.txt
+
+# RUN pip install -r requirements.txt
+ 
+# COPY . .
+ 
+# CMD ["python", "app.py"]
+
+# """
+ 
+# # Cloud Deployment with Kubernetes
+
+# # Create a Kubernetes deployment file
+
+# kubernetes_deployment_content = """
+
+# apiVersion: apps/v1
+
+# kind: Deployment
+
+# metadata:
+
+#   name: price-optimization
+
+# spec:
+
+#   replicas: 3
+
+#   selector:
+
+#     matchLabels:
+
+#       app: price-optimization
+
+#   template:
+
+#     metadata:
+
+#       labels:
+
+#         app: price-optimization
+
+#     spec:
+
+#       containers:
+
+#       - name: price-optimization
+
+#         image: your-docker-image
+
+#         ports:
+
+#         - containerPort: 80
+
+# """
+ 
+# # Save the Jenkinsfile, Dockerfile, and Kubernetes deployment file
+
+# with open('Jenkinsfile', 'w') as f:
+
+#     f.write(jenkinsfile_content)
+ 
+# with open('Dockerfile', 'w') as f:
+
+#     f.write(dockerfile_content)
+ 
+# with open('kubernetes_deployment.yaml', 'w') as f:
+
+#     f.write(kubernetes_deployment_content)
+ 
+# print("Files for CI/CD pipeline, Dockerization, and Kubernetes deployment have been created.")
+
+ 
