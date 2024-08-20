@@ -1,0 +1,261 @@
+!pip install pandas sklearn
+import pandas as pd
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import StandardScaler
+
+# Load the dataset
+df = pd.read_csv('ride_sharing_data.csv')
+
+# Feature Engineering
+df['weather_condition'] = df['weather_condition'].astype('category').cat.codes
+df['traffic_condition'] = df['traffic_condition'].astype('category').cat.codes
+
+# Define features and target
+features = ['distance_km', 'base_fare', 'competitor_price', 'weather_condition', 'traffic_condition']
+target = 'ride_demand'
+
+X = df[features]
+y = df[target]
+
+# Split the dataset
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+train_index, test_index = train_test_split(range(len(y)), test_size=0.2, random_state=42)
+
+
+# Standardize the features
+scaler = StandardScaler()
+X_train_scaled = scaler.fit_transform(X_train)
+X_test_scaled = scaler.transform(X_test)
+
+# Save preprocessed data
+# X_train_scaled.to_csv('X_train_scaled.csv', index=False)
+# X_test_scaled.to_csv('X_test_scaled.csv', index=False)
+# y_train.to_csv('y_train.csv', index=False)
+# y_test.to_csv('y_test.csv', index=False)
+
+
+
+!pip install transformers torch sklearn pandas
+
+
+from transformers import BertTokenizer, BertForSequenceClassification, Trainer, TrainingArguments
+import torch
+from sklearn.preprocessing import LabelEncoder
+from sklearn.metrics import accuracy_score
+
+# Load pre-trained model and tokenizer
+tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+model = BertForSequenceClassification.from_pretrained('bert-base-uncased', num_labels=len(df[target].unique()))
+
+# Encode the target labels
+label_encoder = LabelEncoder()
+y_encoded = label_encoder.fit_transform(y)
+y_encoded = y_encoded.astype('int64')
+
+# Prepare data
+train_encodings = tokenizer(list(X_train.apply(lambda row: ' '.join(map(str, row)), axis=1)), truncation=True, padding=True)
+test_encodings = tokenizer(list(X_test.apply(lambda row: ' '.join(map(str, row)), axis=1)), truncation=True, padding=True)
+
+# Convert to PyTorch dataset
+class PriceOptimizationDataset(torch.utils.data.Dataset):
+    def __init__(self, encodings, labels):
+        self.encodings = encodings
+        self.labels = labels.astype('int64')
+        
+
+    def __getitem__(self, idx):
+        item = {key: torch.tensor(val[idx]) for key, val in self.encodings.items()}
+        item['labels'] = torch.tensor(self.labels[idx])
+        return item
+
+    def __len__(self):
+        return len(self.labels)
+
+train_dataset = PriceOptimizationDataset(train_encodings, y_encoded[train_index])
+test_dataset = PriceOptimizationDataset(test_encodings, y_encoded[test_index])
+
+# Training arguments
+training_args = TrainingArguments(
+    output_dir='./results',
+    num_train_epochs=3,
+    per_device_train_batch_size=8,
+    per_device_eval_batch_size=8,
+    evaluation_strategy="epoch",
+    logging_dir='./logs',
+    logging_steps=10,
+)
+
+# Initialize Trainer
+trainer = Trainer(
+    model=model,
+    args=training_args,
+    train_dataset=train_dataset,
+    eval_dataset=test_dataset,
+)
+
+# Train the model
+trainer.train()
+
+# Evaluate
+predictions = trainer.predict(test_dataset)
+predicted_labels = torch.argmax(torch.tensor(predictions.predictions), dim=-1)
+accuracy = accuracy_score(y_encoded[test_index], predicted_labels)
+print(f'Accuracy: {accuracy}')
+
+
+def optimize_price(distance_km, base_fare, competitor_price, weather_condition, traffic_condition, model, tokenizer, scaler):
+    # Prepare input data
+    input_data = pd.DataFrame([[distance_km, base_fare, competitor_price, weather_condition, traffic_condition]],
+                              columns=['distance_km', 'base_fare', 'competitor_price', 'weather_condition', 'traffic_condition'])
+    input_scaled = scaler.transform(input_data)
+    input_text = ' '.join(map(str, input_scaled.flatten()))
+    
+    # Tokenize and predict
+    encodings = tokenizer([input_text], truncation=True, padding=True, return_tensors="pt")
+    with torch.no_grad():
+        outputs = model(**encodings)
+        prediction = torch.argmax(outputs.logits, dim=-1).item()
+    
+    # Example adjustment logic
+    optimized_price = base_fare + (competitor_price - base_fare) * 0.5
+    return optimized_price
+
+# Example usage
+optimized_price = optimize_price(4.5, 10.00, 12.50, 1, 0, model, tokenizer, scaler)
+print(f"Optimized Price: {optimized_price}")
+
+
+#dockerfile
+
+# Use an official Python runtime as a parent image
+FROM python:3.9-slim
+
+# Set the working directory in the container
+WORKDIR /app
+
+# Copy the current directory contents into the container at /app
+COPY . /app
+
+# Install any needed packages specified in requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Expose port 80
+EXPOSE 80
+
+# Run app.py when the container launches
+CMD ["python", "app.py"]
+
+
+from flask import Flask, request, jsonify
+import pandas as pd
+from transformers import BertTokenizer, BertForSequenceClassification
+import torch
+
+app = Flask(__name__)
+
+# Load model and tokenizer
+tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+model = BertForSequenceClassification.from_pretrained('bert-base-uncased', num_labels=3)
+scaler = ...  # Load your scaler
+
+@app.route('/predict', methods=['POST'])
+def predict():
+    data = request.json
+    features = data['features']
+    input_df = pd.DataFrame([features], columns=['distance_km', 'base_fare', 'competitor_price', 'weather_condition', 'traffic_condition'])
+    scaled_features = scaler.transform(input_df)
+    input_text = ' '.join(map(str, scaled_features.flatten()))
+    encodings = tokenizer([input_text], truncation=True, padding=True, return_tensors="pt")
+    
+    with torch.no_grad():
+        outputs = model(**encodings)
+        prediction = torch.argmax(outputs.logits, dim=-1).item()
+    
+    return jsonify({'prediction': prediction})
+
+@app.route('/optimize_price', methods=['POST'])
+def optimize_price():
+    data = request.json
+    base_fare = data['base_fare']
+    competitor_price = data['competitor_price']
+    weather_condition = data['weather_condition']
+    traffic_condition = data['traffic_condition']
+    
+    optimized_price = base_fare + (competitor_price - base_fare) * 0.5
+    return jsonify({'optimized_price': optimized_price})
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=80)
+
+
+#deployment.yaml
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: price-optimization-deployment
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: price-optimization
+  template:
+    metadata:
+      labels:
+        app: price-optimization
+    spec:
+      containers:
+      - name: price-optimization
+        image: your-dockerhub-username/price-optimization:latest
+        ports:
+        - containerPort: 80
+
+
+#service.yaml
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: price-optimization-service
+spec:
+  selector:
+    app: price-optimization
+  ports:
+    - protocol: TCP
+      port: 80
+      targetPort: 80
+  type: LoadBalancer
+
+
+pipeline {
+    agent any
+
+    stages {
+        stage('Build Docker Image') {
+            steps {
+                script {
+                    docker.build("your-dockerhub-username/price-optimization:latest")
+                }
+            }
+        }
+
+        stage('Push Docker Image') {
+            steps {
+                script {
+                    docker.withRegistry('https://index.docker.io/v1/', 'dockerhub-credentials-id') {
+                        docker.image('your-dockerhub-username/price-optimization:latest').push('latest')
+                    }
+                }
+            }
+        }
+
+        stage('Deploy to Kubernetes') {
+            steps {
+                script {
+                    kubernetesDeploy(configs: 'kubernetes/deployment.yaml', kubeconfigId: 'kubeconfig-id')
+                    kubernetesDeploy(configs: 'kubernetes/service.yaml', kubeconfigId: 'kubeconfig-id')
+                }
+            }
+        }
+    }
+}
